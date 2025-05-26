@@ -473,6 +473,108 @@ class TestInventory(unittest.TestCase):
         dev2 = new_inventory.get_device("10.0.1.11")
         self.assertIsNotNone(dev2)
         self.assertEqual(dev2.routing_table, [])
+        self.assertEqual(dev2.interface_metrics, {}) # Should be empty dict by default
+
+    # --- Tests for Device 'interface_metrics' attribute ---
+    def test_device_initialization_with_interface_metrics(self):
+        metrics_data = {
+            '1': {'ifIndex': 1, 'ifDescr': 'eth0', 'calculated_in_bps': 1000.0},
+            '2': {'ifIndex': 2, 'ifDescr': 'eth1', 'calculated_out_bps': 2000.0}
+        }
+        device = Device("192.168.10.1", interface_metrics=metrics_data)
+        self.assertEqual(device.interface_metrics, metrics_data)
+
+    def test_device_to_dict_with_interface_metrics(self):
+        metrics_data = {'1': {'ifIndex': 1, 'calculated_in_bps': 500.0}}
+        device = Device("192.168.10.2", interface_metrics=metrics_data)
+        device_dict = device.to_dict()
+        self.assertIn('interface_metrics', device_dict)
+        self.assertEqual(device_dict['interface_metrics'], metrics_data)
+
+    def test_device_from_dict_with_interface_metrics(self):
+        metrics_data = {'10': {'ifDescr': 'Gig0/0/0', 'ifSpeed': 1000000000}}
+        data = {"ip_address": "192.168.10.3", "interface_metrics": metrics_data}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.interface_metrics, metrics_data)
+
+    def test_device_from_dict_interface_metrics_is_none(self):
+        data = {"ip_address": "192.168.10.4", "interface_metrics": None}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.interface_metrics, {}) # Default to empty dict
+
+    def test_device_from_dict_interface_metrics_missing(self):
+        data = {"ip_address": "192.168.10.5"}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.interface_metrics, {}) # Default to empty dict
+
+    def test_device_update_attributes_interface_metrics(self):
+        device = Device("192.168.10.1")
+        self.assertEqual(device.interface_metrics, {})
+        
+        metrics1 = {'1': {'ifDescr': 'eth0', 'calculated_in_bps': 100.0}}
+        device.update_attributes({'interface_metrics': metrics1})
+        self.assertEqual(device.interface_metrics, metrics1)
+
+        metrics2 = {'2': {'ifDescr': 'eth1', 'calculated_out_bps': 200.0}}
+        # Update should replace the entire metrics dict
+        device.update_attributes({'interface_metrics': metrics2}) 
+        self.assertEqual(device.interface_metrics, metrics2)
+        
+        device.update_attributes({'interface_metrics': {}}) # Clear metrics
+        self.assertEqual(device.interface_metrics, {})
+
+    def test_device_str_with_interface_metrics(self):
+        metrics_data = {
+            '1': {'ifIndex': 1, 'ifDescr': 'eth0', 'calculated_in_bps': 12345.67, 'calculated_out_bps': 67890.12},
+            '2': {'ifIndex': 2, 'ifDescr': 'lo0', 'calculated_in_bps': 0.0, 'calculated_out_bps': 0.0}
+        }
+        device = Device("192.168.10.1", interface_metrics=metrics_data)
+        device_str = str(device)
+        self.assertIn("Monitored Interfaces: 2", device_str)
+        self.assertIn("Example Interface (eth0):", device_str) # Assumes '1' is sorted first
+        self.assertIn("In: 12345.67 bps, Out: 67890.12 bps", device_str)
+    
+    def test_device_str_with_interface_metrics_sorted_keys(self):
+        metrics_data = {
+            '10': {'ifIndex': 10, 'ifDescr': 'TenGigE0/1', 'calculated_in_bps': 10.0, 'calculated_out_bps': 20.0},
+            '2': {'ifIndex': 2, 'ifDescr': 'Gig0/2', 'calculated_in_bps': 30.0, 'calculated_out_bps': 40.0}
+        }
+        device = Device("192.168.10.1", interface_metrics=metrics_data)
+        device_str = str(device)
+        self.assertIn("Monitored Interfaces: 2", device_str)
+        # Test assumes ifIndex '2' will be sorted before '10' when keys are treated as strings if not careful,
+        # but the __str__ implementation sorts by int(key)
+        self.assertIn("Example Interface (Gig0/2):", device_str)
+        self.assertIn("In: 30.00 bps, Out: 40.00 bps", device_str)
+
+
+    def test_device_str_without_interface_metrics(self):
+        device = Device("192.168.10.1")
+        device_str = str(device)
+        self.assertIn("Monitored Interfaces: 0", device_str)
+        self.assertNotIn("Example Interface", device_str)
+
+    # --- Tests for Inventory with 'interface_metrics' attribute ---
+    def test_inventory_save_load_with_interface_metrics(self):
+        metrics_data = {'1': {'ifDescr': 'FastEthernet0/0', 'ifSpeed': 100000000}}
+        self.inventory.add_device("10.0.2.10", interface_metrics=metrics_data)
+        self.inventory.add_device("10.0.2.11") # Device without interface_metrics
+
+        self.inventory.save_to_json(self.test_json_file)
+        
+        new_inventory = Inventory()
+        new_inventory.load_from_json(self.test_json_file)
+
+        dev1 = new_inventory.get_device("10.0.2.10")
+        self.assertIsNotNone(dev1)
+        self.assertEqual(dev1.interface_metrics, metrics_data)
+
+        dev2 = new_inventory.get_device("10.0.2.11")
+        self.assertIsNotNone(dev2)
+        self.assertEqual(dev2.interface_metrics, {})
 
 
 if __name__ == '__main__':

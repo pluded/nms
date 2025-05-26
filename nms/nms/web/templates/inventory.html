@@ -12,12 +12,22 @@
         nav ul li { display: inline; margin-right: 20px; }
         nav ul li a { color: #fff; text-decoration: none; }
         main { padding: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9em; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
         th { background-color: #555; color: #fff; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
+        /* Removed tr:nth-child(even) for clarity with expandable rows, will style device rows directly */
+        .device-row td { background-color: #fff; } /* Default for device rows */
+        .device-row:nth-child(4n-3) td { background-color: #f9f9f9; } /* Style odd device data rows (since each device now takes 2 rows: data + metrics) */
+        .metrics-row td { background-color: #e9e9e9; } /* Background for the cell containing metrics table */
         .error { color: red; font-weight: bold; }
-        footer { text-align: center; padding: 1em 0; background-color: #333; color: #fff; position: fixed; bottom: 0; width: 100%;}
+        footer { text-align: center; padding: 1em 0; background-color: #333; color: #fff; /* position: fixed; bottom: 0; */ width: 100%; margin-top: 30px;}
+        .toggle-metrics { padding: 5px 10px; font-size: 0.8em; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 3px; }
+        .toggle-metrics:hover { background-color: #0056b3; }
+        .metrics-details { border-top: 2px solid #aaa; padding: 15px; background-color: #fdfdfd; }
+        .metrics-table { width: 100%; margin-top: 10px; border-collapse: collapse; }
+        .metrics-table th, .metrics-table td { border: 1px solid #ccc; padding: 6px; text-align: left; font-size: 0.85em;}
+        .metrics-table th { background-color: #6c757d; color: #fff; }
+        .metrics-table tr:nth-child(even) { background-color: #f2f2f2; }
     </style>
 </head>
 <body>
@@ -59,12 +69,13 @@
                         <th>Interfaces</th>
                         <th>L2 Links</th>
                         <th>Routing Info</th>
-                        <th>Other Attributes</th> 
+                        <th>Other Attributes</th>
+                        <th>Actions</th> 
                     </tr>
                 </thead>
                 <tbody>
                     {% for device in devices %}
-                        <tr>
+                        <tr class="device-row">
                             <td>{{ device.ip_address }}</td>
                             <td>{{ device.system_name if device.system_name is not none else 'N/A' }}</td>
                             <td>{{ device.vendor if device.vendor is not none else 'N/A' }}</td>
@@ -79,8 +90,6 @@
                                     N/A
                                 {% endif %}
                             </td>
-                            {# Display system_description (should be populated by sysDescr from SNMP if mapped) #}
-                            {# If sysDescr is in other_attributes and not mapped, it will appear below #}
                             <td>{{ device.system_description if device.system_description is not none else device.other_attributes.get('sysDescr', 'N/A') }}</td>
                             <td>{{ device.other_attributes.get('sysObjectID', 'N/A') }}</td>
                             <td>{{ device.uptime if device.uptime is not none else 'N/A' }}</td>
@@ -89,19 +98,15 @@
                             <td>{{ device.if_number if device.if_number is not none else 'N/A' }}</td>
                             <td>
                                 {% if device.links %}
-                                    {{ device.links | length }} link(s) discovered.
-                                    <ul>
-                                    {% for link in device.links[:3] %} {# Display up to 3 links #}
+                                    {{ device.links | length }} link(s).
+                                    <ul style="margin-top: 5px; padding-left: 15px; font-size: 0.9em;">
+                                    {% for link in device.links[:2] %} {# Display up to 2 links summary #}
                                         <li>
-                                            {{ link.protocol }}: Local Port {{ link.local_port_identifier }} -> 
-                                            {{ link.remote_device_id }} 
-                                            ({{ link.remote_port_id if link.remote_port_id is not none else 'N/A' }})
-                                            {% if link.remote_platform %} (Platform: {{link.remote_platform }}) {% endif %}
-                                            {% if link.remote_device_ip %} (IP: {{link.remote_device_ip }}) {% endif %}
+                                            <small>{{ link.protocol }}: {{ link.local_port_identifier }} -> {{ link.remote_device_id }} ({{ link.remote_port_id | default('N/A') }})</small>
                                         </li>
                                     {% endfor %}
-                                    {% if device.links | length > 3 %}
-                                        <li>... and {{ (device.links | length) - 3 }} more.</li>
+                                    {% if device.links | length > 2 %}
+                                        <li><small>... and {{ (device.links | length) - 2 }} more.</small></li>
                                     {% endif %}
                                     </ul>
                                 {% else %}
@@ -116,7 +121,6 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {# Filter out sysObjectID and sysDescr if already handled or to avoid duplication #}
                                 {% set displayed_keys = ['sysObjectID', 'sysDescr'] %}
                                 {% set other_attrs_to_display = {} %}
                                 {% if device.other_attributes %}
@@ -126,16 +130,68 @@
                                         {% endif %}
                                     {% endfor %}
                                 {% endif %}
-
                                 {% if other_attrs_to_display %}
-                                    <ul>
+                                    <ul style="margin-top: 5px; padding-left: 15px; font-size: 0.9em;">
                                     {% for key, value in other_attrs_to_display.items() | sort %}
-                                        <li><strong>{{ key }}:</strong> {{ value }}</li>
+                                        <li><small><strong>{{ key }}:</strong> {{ value }}</small></li>
                                     {% endfor %}
                                     </ul>
                                 {% else %}
                                     N/A
                                 {% endif %}
+                            </td>
+                            <td>
+                                <button class="toggle-metrics" data-target="metrics-{{ device.ip_address | replace('.', '-') }}">Show/Hide Metrics</button>
+                            </td>
+                        </tr>
+                        {# Expandable row for interface metrics - hidden by default #}
+                        <tr class="metrics-row" style="display:none;">
+                            <td colspan="18"> {# Span all columns of the main table (17 + 1 for new Actions column) #}
+                                <div id="metrics-{{ device.ip_address | replace('.', '-') }}" class="metrics-details">
+                                    <h4>Interface Metrics for {{ device.ip_address }}</h4>
+                                    {% if device.interface_metrics and device.interface_metrics is mapping and device.interface_metrics | length > 0 %}
+                                        <table class="metrics-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Interface (ifDescr)</th>
+                                                    <th>Speed (bps)</th>
+                                                    <th>Admin Status</th>
+                                                    <th>Oper Status</th>
+                                                    <th>In (bps)</th>
+                                                    <th>Out (bps)</th>
+                                                    <th>In (pps)</th>
+                                                    <th>Out (pps)</th>
+                                                    <th>In Errors/s</th>
+                                                    <th>Out Errors/s</th>
+                                                    <th>In Discards/s</th>
+                                                    <th>Out Discards/s</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {# Sort by ifIndex (integer value) for consistent display #}
+                                                {% set sorted_metrics = device.interface_metrics.items() | sort(attribute='0', reverse=False, case_sensitive=False, key_conv=int) %}
+                                                {% for if_index, metrics in sorted_metrics %}
+                                                <tr>
+                                                    <td>{{ metrics.ifDescr | default(if_index) }}</td>
+                                                    <td>{{ metrics.ifSpeed | default('N/A') }}</td>
+                                                    <td>{{ metrics.ifAdminStatus | default('N/A') }}</td> {# Consider mapping to up/down #}
+                                                    <td>{{ metrics.ifOperStatus | default('N/A') }}</td> {# Consider mapping to up/down #}
+                                                    <td>{{ "%.2f" | format(metrics.calculated_in_bps | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_out_bps | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_in_pps | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_out_pps | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_in_error_rate | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_out_error_rate | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_in_discard_rate | default(0.0)) }}</td>
+                                                    <td>{{ "%.2f" | format(metrics.calculated_out_discard_rate | default(0.0)) }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    {% else %}
+                                        <p>No interface metrics available for this device, or data is still loading.</p>
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                     {% endfor %}
@@ -149,5 +205,24 @@
     <footer>
         <p>&copy; 2023 NMS Project</p>
     </footer>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleButtons = document.querySelectorAll('.toggle-metrics');
+        toggleButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const metricsDivContainerRow = document.getElementById(targetId).closest('tr.metrics-row');
+
+                if (metricsDivContainerRow) {
+                    const isHidden = metricsDivContainerRow.style.display === 'none';
+                    metricsDivContainerRow.style.display = isHidden ? 'table-row' : 'none';
+                    // Update button text (optional)
+                    // this.textContent = isHidden ? 'Hide Metrics' : 'Show Metrics';
+                }
+            });
+        });
+    });
+    </script>
 </body>
 </html>

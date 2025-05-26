@@ -7,7 +7,8 @@ import sys
 try:
     from nms.discovery.icmp_sweeper import sweep_network, PingCommandNotFound
     from nms.discovery.snmp_discoverer import discover_snmp 
-    from nms.discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table # L2/L3 Discovery
+    from nms.discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table 
+    from nms.monitoring.interface_monitor import collect_interface_metrics # For poll-metrics
     from nms.inventory.device import Inventory 
 except ModuleNotFoundError:
     # This block allows running cli.py directly from nms/nms for testing,
@@ -16,7 +17,8 @@ except ModuleNotFoundError:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from discovery.icmp_sweeper import sweep_network, PingCommandNotFound
     from discovery.snmp_discoverer import discover_snmp 
-    from discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table # L2/L3 Discovery
+    from discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table
+    from monitoring.interface_monitor import collect_interface_metrics # For poll-metrics
     from inventory.device import Inventory
 
 # Get a logger for the CLI module
@@ -233,6 +235,90 @@ def handle_discover(args):
         print("\nDiscovery complete. No active devices found.")
 
 
+def handle_poll_metrics(args):
+    """
+    Handles the 'poll-metrics' subcommand.
+    Polls interface metrics for specified device(s) and updates the inventory.
+    """
+    logger.info(f"Starting 'poll-metrics' for target '{args.target}' with community '{args.community}' on inventory '{args.inventory_file}'")
+    
+    inventory = Inventory()
+    if not os.path.exists(args.inventory_file):
+        logger.error(f"Inventory file '{args.inventory_file}' not found. Cannot poll metrics.")
+        print(f"Error: Inventory file '{args.inventory_file}' not found. Please run discovery or check the file path.")
+        return
+    
+    try:
+        inventory.load_from_json(args.inventory_file)
+        logger.info(f"Successfully loaded inventory from {args.inventory_file}")
+    except Exception as e: # Catch broad exceptions from load_from_json if it raises them
+        logger.error(f"Failed to load inventory from {args.inventory_file}: {e}", exc_info=True)
+        print(f"Error: Could not load inventory from {args.inventory_file}. Aborting. Check logs for details.")
+        return
+
+    devices_to_poll = []
+    if args.target.lower() == 'all':
+        devices_to_poll = inventory.list_all_devices()
+        if not devices_to_poll:
+            logger.info("No devices found in inventory to poll.")
+            print("Inventory is empty. Nothing to poll.")
+            return
+        logger.info(f"Polling metrics for all {len(devices_to_poll)} devices in inventory.")
+        print(f"Polling metrics for all {len(devices_to_poll)} devices...")
+    else:
+        device = inventory.get_device(args.target)
+        if device:
+            devices_to_poll.append(device)
+            logger.info(f"Target device {args.target} found in inventory. Preparing to poll.")
+            print(f"Found device {args.target}. Polling metrics...")
+        else:
+            logger.error(f"Device IP '{args.target}' not found in inventory '{args.inventory_file}'.")
+            print(f"Error: Device with IP '{args.target}' not found in the inventory.")
+            return
+
+    polled_device_count = 0
+    for dev in devices_to_poll:
+        logger.info(f"Polling interface metrics for {dev.ip_address}...")
+        print(f"\nPolling metrics for {dev.ip_address} ({dev.system_name or 'N/A'})...")
+        
+        existing_metrics = dev.interface_metrics # This is a dict, possibly empty
+        
+        new_metrics = collect_interface_metrics(
+            dev.ip_address, 
+            args.community, 
+            existing_device_metrics=existing_metrics
+        )
+        
+        if new_metrics is not None: # collect_interface_metrics returns dict (even empty) on success, None on major SNMP error
+            dev.update_attributes({'interface_metrics': new_metrics})
+            # Also update discovered_protocols if 'InterfaceMonitoring' is not there
+            current_protocols = getattr(dev, 'discovered_protocols', [])
+            if "InterfaceMonitoring" not in current_protocols:
+                current_protocols.append("InterfaceMonitoring")
+                dev.update_attributes({'discovered_protocols': sorted(list(set(current_protocols)))})
+
+            logger.info(f"Successfully collected and updated metrics for {dev.ip_address}.")
+            print(f"  Successfully updated metrics for {dev.ip_address}.")
+            polled_device_count +=1
+        else:
+            logger.warning(f"Failed to collect metrics for {dev.ip_address} (SNMP error or device unreachable).")
+            print(f"  Warning: Failed to collect metrics for {dev.ip_address}. Check logs.")
+
+    if polled_device_count > 0 or args.target.lower() != 'all': # Save if any attempt was made for specific IP or if 'all' and devices polled
+        try:
+            inventory.save_to_json(args.inventory_file)
+            logger.info(f"Finished polling metrics for {polled_device_count} device(s). Inventory saved to {args.inventory_file}.")
+            print(f"\nFinished polling metrics. {polled_device_count} device(s) processed. Inventory saved.")
+        except Exception as e:
+            logger.critical(f"Failed to save inventory after polling metrics: {e}", exc_info=True)
+            print(f"CRITICAL ERROR: Failed to save inventory to {args.inventory_file}. Check logs for details.")
+    elif args.target.lower() == 'all' and not devices_to_poll: # 'all' was specified but inventory was empty
+        pass # Message already printed
+    else: # 'all' specified, devices existed, but none were successfully polled (all had SNMP errors)
+        logger.info("Polling complete, but no devices had metrics successfully collected. Inventory not re-saved unless it was modified by loading.")
+        print("\nPolling complete. No new metrics were successfully collected.")
+
+
 def handle_show(args):
     """
     Handles the 'show' subcommand.
@@ -308,6 +394,20 @@ def main():
     # --- Show Subcommand ---
     show_parser = subparsers.add_parser("show", help="Show devices in the inventory")
     show_parser.set_defaults(func=handle_show)
+
+    # --- Poll Metrics Subcommand ---
+    poll_metrics_parser = subparsers.add_parser("poll-metrics", help="Poll interface metrics for a device or all devices")
+    poll_metrics_parser.add_argument(
+        "target", 
+        help="IP address of the device to poll, or 'all' for all devices in inventory."
+    )
+    poll_metrics_parser.add_argument(
+        "--community", 
+        default=DEFAULT_COMMUNITY_STRING, 
+        help=f"SNMP community string (default: {DEFAULT_COMMUNITY_STRING})"
+    )
+    poll_metrics_parser.set_defaults(func=handle_poll_metrics)
+
 
     args = parser.parse_args()
 

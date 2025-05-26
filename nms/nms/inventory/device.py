@@ -41,6 +41,9 @@ class Device:
         # New attribute for L3 routing table
         routing_table_arg = kwargs.get("routing_table")
         self.routing_table: list[dict] = routing_table_arg if routing_table_arg is not None else []
+        # New attribute for interface metrics
+        interface_metrics_arg = kwargs.get("interface_metrics")
+        self.interface_metrics: dict = interface_metrics_arg if interface_metrics_arg is not None else {}
 
 
         self.other_attributes: dict = {
@@ -49,7 +52,7 @@ class Device:
                 "system_description", "uptime", "system_name", "location", 
                 "contact", "if_number", "vendor", "model", "serial_number", 
                 "software_version", "mac_address", "discovered_protocols", "links",
-                "routing_table" # Added routing_table
+                "routing_table", "interface_metrics" # Added interface_metrics
             ]
         }
         logger.debug(f"Device created: {self.ip_address}")
@@ -126,6 +129,23 @@ class Device:
             if len(self.routing_table) > 2:
                 attrs.append("    ... and more.")
         
+        # Display Interface Metrics Summary
+        if self.interface_metrics:
+            attrs.append(f"Monitored Interfaces: {len(self.interface_metrics)}")
+            if len(self.interface_metrics) > 0:
+                # Sort by ifIndex (assuming keys are string numbers)
+                try:
+                    first_if_idx = sorted(self.interface_metrics.keys(), key=lambda x: int(x))[0]
+                    first_if_data = self.interface_metrics[first_if_idx]
+                    attrs.append(f"  Example Interface ({first_if_data.get('ifDescr', first_if_idx)}):")
+                    attrs.append(f"    In: {first_if_data.get('calculated_in_bps', 0.0):.2f} bps, Out: {first_if_data.get('calculated_out_bps', 0.0):.2f} bps")
+                except (ValueError, TypeError, IndexError) as e: # Handle potential errors with sorting/accessing
+                    logger.warning(f"Could not display example interface metric for {self.ip_address}: {e}")
+                    attrs.append("  (Could not display example interface metric details)")
+
+        else:
+            attrs.append("Monitored Interfaces: 0")
+
         # Display any remaining other_attributes that aren't sysObjectID
         # Filter out sysObjectID if it was already displayed
         other_attrs_to_display = {
@@ -154,7 +174,8 @@ class Device:
             "mac_address": self.mac_address,
             "discovered_protocols": self.discovered_protocols,
             "links": self.links, 
-            "routing_table": self.routing_table, # Added routing_table attribute
+            "routing_table": self.routing_table,
+            "interface_metrics": self.interface_metrics, # Added interface_metrics
             "other_attributes": self.other_attributes,
         }
 
