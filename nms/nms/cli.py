@@ -5,11 +5,11 @@ import sys
 
 # Adjust import paths to be robust for different execution contexts
 try:
-    from nms.discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from nms.discovery.snmp_discoverer import discover_snmp 
-    from nms.discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table 
-    from nms.monitoring.interface_monitor import collect_interface_metrics # For poll-metrics
-    from nms.inventory.device import Inventory 
+    from .discovery.icmp_sweeper import sweep_network, PingCommandNotFound
+    from .discovery.snmp_discoverer import discover_snmp 
+    from .discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table 
+    from .monitoring.interface_monitor import collect_interface_metrics # For poll-metrics
+    from .inventory.device import Inventory 
 except ModuleNotFoundError:
     # This block allows running cli.py directly from nms/nms for testing,
     # assuming nms/ (project root) is in PYTHONPATH.
@@ -358,7 +358,7 @@ def main():
     # If logging hasn't been configured by __init__.py (e.g. running cli.py directly for dev)
     # provide a basic configuration.
     if not logging.getLogger().hasHandlers(): # Check if root logger has handlers
-        from nms.utils.logger import setup_logging # Assuming utils is in the same nms.nms level
+        from .utils.logger import setup_logging # Assuming utils is in the same nms.nms level
         print("CLI Main: Basic logging not yet configured, setting up for CLI direct run.")
         setup_logging(log_level=logging.INFO, force_setup=True)
 
@@ -455,7 +455,7 @@ if __name__ == "__main__":
     # or this script might be imported.
     # The `main()` function itself also has a fallback for logging setup.
     try:
-        from nms.utils.logger import setup_logging
+        from .utils.logger import setup_logging
         # Ensure logging is set up if not already done by package import.
         # This is a fallback for direct script execution.
         if not logging.getLogger().hasHandlers():

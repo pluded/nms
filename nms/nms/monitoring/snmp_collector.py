@@ -1,6 +1,6 @@
 import logging
 from pysnmp.hlapi import (
-    getCmd, SnmpEngine, CommunityData, UdpTransportTarget, 
+    GetCommandGenerator, SnmpEngine, CommunityData, UdpTransportTarget, 
     ContextData, ObjectType, ObjectIdentity
 )
 from pysnmp.error import PySnmpError # For more specific PySNMP exceptions
@@ -31,6 +31,7 @@ def fetch_snmp_data(ip_address: str, community_string: str, oids: list[str]) -> 
 
     try:
         snmp_engine = SnmpEngine()
+        cmdGen = GetCommandGenerator() # Instantiate GetCommandGenerator
         community_data = CommunityData(community_string, mpModel=1) # mpModel=1 for SNMPv2c
         # Increased timeout to 2s and retries to 3 for potentially slower devices/networks
         transport_target = UdpTransportTarget((ip_address, 161), timeout=2, retries=3) 
@@ -38,7 +39,7 @@ def fetch_snmp_data(ip_address: str, community_string: str, oids: list[str]) -> 
 
         object_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
 
-        iterator = getCmd(
+        error_indication, error_status, error_index, var_binds = cmdGen.getCmd( # Call getCmd on the instance
             snmp_engine,
             community_data,
             transport_target,
@@ -46,8 +47,7 @@ def fetch_snmp_data(ip_address: str, community_string: str, oids: list[str]) -> 
             *object_types,
             lexicographicMode=False # Important for processing varBinds in the order of OIDs requested
         )
-
-        error_indication, error_status, error_index, var_binds = next(iterator)
+        # Assuming getCmd on GetCommandGenerator instance returns the full tuple, not an iterator
 
         if error_indication:
             # This usually indicates a transport-level error (e.g., host unreachable, timeout)
@@ -149,7 +149,7 @@ def fetch_snmp_data(ip_address: str, community_string: str, oids: list[str]) -> 
 
 if __name__ == '__main__':
     # Ensure logger is configured for direct script execution
-    from nms.utils.logger import setup_logging # Adjust import if necessary
+    from ..utils.logger import setup_logging # Adjust import if necessary
     setup_logging(log_level=logging.DEBUG, force_setup=True)
 
     logger.info("--- Starting direct test for snmp_collector.py ---")
