@@ -45,12 +45,19 @@
                     <tr>
                         <th>IP Address</th>
                         <th>System Name</th>
+                        <th>Vendor</th>
+                        <th>Model</th>
+                        <th>S/N</th>
+                        <th>SW Version</th>
+                        <th>MAC Address</th>
+                        <th>Protocols</th>
                         <th>System Description</th>
+                        <th>System Object ID</th>
                         <th>Uptime</th>
                         <th>Location</th>
                         <th>Contact</th>
                         <th>Interfaces</th>
-                        <th>Other Attributes</th>
+                        <th>Other Attributes</th> 
                     </tr>
                 </thead>
                 <tbody>
@@ -58,15 +65,41 @@
                         <tr>
                             <td>{{ device.ip_address }}</td>
                             <td>{{ device.system_name if device.system_name is not none else 'N/A' }}</td>
-                            <td>{{ device.system_description if device.system_description is not none else 'N/A' }}</td>
+                            <td>{{ device.vendor if device.vendor is not none else 'N/A' }}</td>
+                            <td>{{ device.model if device.model is not none else 'N/A' }}</td>
+                            <td>{{ device.serial_number if device.serial_number is not none else 'N/A' }}</td>
+                            <td>{{ device.software_version if device.software_version is not none else 'N/A' }}</td>
+                            <td>{{ device.mac_address if device.mac_address is not none else 'N/A' }}</td>
+                            <td>
+                                {% if device.discovered_protocols %}
+                                    {{ device.discovered_protocols | sort | join(', ') }}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
+                            {# Display system_description (should be populated by sysDescr from SNMP if mapped) #}
+                            {# If sysDescr is in other_attributes and not mapped, it will appear below #}
+                            <td>{{ device.system_description if device.system_description is not none else device.other_attributes.get('sysDescr', 'N/A') }}</td>
+                            <td>{{ device.other_attributes.get('sysObjectID', 'N/A') }}</td>
                             <td>{{ device.uptime if device.uptime is not none else 'N/A' }}</td>
                             <td>{{ device.location if device.location is not none else 'N/A' }}</td>
                             <td>{{ device.contact if device.contact is not none else 'N/A' }}</td>
                             <td>{{ device.if_number if device.if_number is not none else 'N/A' }}</td>
                             <td>
+                                {# Filter out sysObjectID and sysDescr if already handled or to avoid duplication #}
+                                {% set displayed_keys = ['sysObjectID', 'sysDescr'] %}
+                                {% set other_attrs_to_display = {} %}
                                 {% if device.other_attributes %}
-                                    <ul>
                                     {% for key, value in device.other_attributes.items() %}
+                                        {% if key not in displayed_keys %}
+                                            {% set _ = other_attrs_to_display.update({key: value}) %}
+                                        {% endif %}
+                                    {% endfor %}
+                                {% endif %}
+
+                                {% if other_attrs_to_display %}
+                                    <ul>
+                                    {% for key, value in other_attrs_to_display.items() | sort %}
                                         <li><strong>{{ key }}:</strong> {{ value }}</li>
                                     {% endfor %}
                                     </ul>

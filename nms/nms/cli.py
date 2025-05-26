@@ -6,15 +6,17 @@ import sys
 # Adjust import paths to be robust for different execution contexts
 try:
     from nms.discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from nms.monitoring.snmp_collector import fetch_snmp_data
-    from nms.inventory.device import Inventory # Device class is used implicitly by Inventory
+    from nms.monitoring.snmp_collector import fetch_snmp_data # Original SNMP collector
+    from nms.discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
+    from nms.inventory.device import Inventory 
 except ModuleNotFoundError:
     # This block allows running cli.py directly from nms/nms for testing,
     # assuming nms/ (project root) is in PYTHONPATH.
     # For normal package usage, the top-level nms/ should be in PYTHONPATH.
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from monitoring.snmp_collector import fetch_snmp_data
+    from monitoring.snmp_collector import fetch_snmp_data # Original SNMP collector
+    from discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
     from inventory.device import Inventory
 
 # Get a logger for the CLI module
@@ -77,50 +79,87 @@ def handle_discover(args):
     for ip in active_ips:
         logger.info(f"Processing device: {ip}")
         print(f"\nProcessing device: {ip}...")
-        try:
-            device = inventory.add_device(ip) # Add or get existing device
-            if not device: # Should not happen if IP is valid string, but as a safeguard
-                logger.error(f"Failed to add/get device for IP {ip} in inventory. Skipping.")
-                print(f"  Error: Could not process device {ip} in inventory. Skipping.")
+        device = inventory.get_device(ip)
+        if not device:
+            try:
+                device = inventory.add_device(ip_address=ip)
+                if not device: # Should not happen if IP is valid string
+                    logger.error(f"Failed to add device for IP {ip} in inventory. Skipping.")
+                    print(f"  Error: Could not add device {ip} to inventory. Skipping.")
+                    continue
+            except ValueError as e:
+                logger.error(f"Invalid IP address '{ip}' encountered on add: {e}. Skipping.")
+                print(f"  Error: Invalid IP address '{ip}'. Skipping.")
                 continue
-        except ValueError as e: # From inventory.add_device if IP is invalid (already checked by sweeper but good practice)
-            logger.error(f"Invalid IP address '{ip}' encountered: {e}. Skipping.")
-            print(f"  Error: Invalid IP address '{ip}'. Skipping.")
-            continue
-
-        snmp_data = fetch_snmp_data(ip, args.community, DEFAULT_SNMP_OIDS)
         
-        attributes_to_update = {}
-        logger.debug(f"SNMP data received for {ip}: {snmp_data}")
-        print(f"  SNMP data for {ip}:")
-        if not snmp_data or all(value is None for value in snmp_data.values()):
-            logger.warning(f"No valid SNMP data received for {ip} with community '{args.community}'.")
-            print(f"    No SNMP data received or all OIDs failed (check logs for details for {ip}).")
-        else:
-            for oid, value in snmp_data.items():
-                attribute_name = OID_TO_ATTRIBUTE_MAP.get(oid, oid) # Default to OID if no friendly name
-                print(f"    {attribute_name}: {value if value is not None else 'Not found/Error'}")
-                if value is not None and OID_TO_ATTRIBUTE_MAP.get(oid): # Only update known attributes with valid data
-                    attributes_to_update[OID_TO_ATTRIBUTE_MAP.get(oid)] = value
-            
-            if attributes_to_update:
-                inventory.update_device_attributes(ip, attributes_to_update)
-                logger.info(f"Updated inventory for {ip} with attributes: {attributes_to_update}")
-                print(f"  Updated inventory for {ip} with new SNMP data.")
-            else:
-                logger.info(f"No new, mappable attributes to update for {ip} from SNMP data (possibly all OIDs failed or returned no data).")
-                print(f"  No new attributes to update in inventory for {ip} from SNMP data.")
-        processed_count +=1
+        # Initialize or get current discovered_protocols
+        current_protocols = getattr(device, 'discovered_protocols', [])
+        if not isinstance(current_protocols, list): # Ensure it's a list
+            current_protocols = []
+        
+        if "ICMP" not in current_protocols:
+            current_protocols.append("ICMP")
+        
+        # Attempt SNMP discovery using the new discover_snmp function
+        logger.info(f"Attempting SNMP discovery for {ip} using new discoverer...")
+        snmp_basic_data = discover_snmp(ip, args.community) # Using new function
 
-    if processed_count > 0 :
+        attributes_to_update_for_device = {}
+
+        if snmp_basic_data:
+            logger.info(f"SNMP basic discovery successful for {ip}: {snmp_basic_data}")
+            print(f"  SNMP Basic Info: sysDescr='{snmp_basic_data.get('sysDescr', 'N/A')}', sysObjectID='{snmp_basic_data.get('sysObjectID', 'N/A')}'")
+            # Map sysDescr to system_description if that's the target attribute in Device class
+            # The Device.update_attributes will handle this if keys match.
+            # If 'sysDescr' is a key in snmp_basic_data, and Device has 'sysDescr' attribute, it's updated.
+            # If Device has 'system_description' and we want sysDescr to fill it, a manual mapping is needed here
+            # For now, let's pass it as is. If 'sysDescr' isn't a direct attribute, it goes to other_attributes.
+            attributes_to_update_for_device.update(snmp_basic_data)
+
+            if "SNMP" not in current_protocols:
+                current_protocols.append("SNMP")
+        else:
+            logger.warning(f"New SNMP discovery failed or returned no data for {ip}.")
+            print(f"  SNMP discovery (new method) failed or returned no data for {ip}.")
+
+        # Update discovered_protocols
+        attributes_to_update_for_device['discovered_protocols'] = list(set(current_protocols)) # Ensure uniqueness
+
+        # Update device with all collected attributes
+        if attributes_to_update_for_device:
+            device.update_attributes(attributes_to_update_for_device)
+            logger.info(f"Updated inventory for {ip} with attributes: {attributes_to_update_for_device}")
+            print(f"  Updated inventory for {ip}.")
+        else:
+            # This case might occur if only ICMP was added and SNMP failed, but we still save protocol
+            logger.info(f"No new attributes (excluding protocols) to update for {ip} from SNMP, but protocol list updated.")
+            print(f"  No new attributes to update from SNMP for {ip}, protocol list updated if changed.")
+            # Still need to save protocol change if it happened
+            if 'discovered_protocols' in attributes_to_update_for_device and device:
+                 device.update_attributes({'discovered_protocols': attributes_to_update_for_device['discovered_protocols']})
+
+
+        # Note: The old fetch_snmp_data and its OID mapping (DEFAULT_SNMP_OIDS, OID_TO_ATTRIBUTE_MAP)
+        # is effectively replaced by the call to discover_snmp for basic info.
+        # If more OIDs were needed, discover_snmp would need to be extended or fetch_snmp_data used in conjunction.
+        # For this task, we are focusing on integrating discover_snmp.
+
+        processed_count += 1
+
+    # Save inventory after processing all active IPs
+    if processed_count > 0 or os.path.exists(args.inventory_file): # Save if we processed, or if file existed (to persist potential load fixes)
         logger.info(f"Saving updated inventory to {args.inventory_file}...")
-        inventory.save_to_json(args.inventory_file) # Errors logged by Inventory class
+        inventory.save_to_json(args.inventory_file) 
         print(f"\nDiscovery complete. Processed {processed_count} device(s). Inventory saved to {args.inventory_file}.")
     elif active_ips: # Active IPs found, but none could be processed (e.g. inventory errors)
         logger.warning("Active IPs were found, but no devices were successfully processed into the inventory.")
+        # Still save if inventory file existed initially, might have been cleared/fixed on load
+        if os.path.exists(args.inventory_file): inventory.save_to_json(args.inventory_file)
         print("\nDiscovery attempted, but no devices were successfully added or updated in the inventory.")
     else: # No active_ips initially
         logger.info("Discovery complete. No active devices found to process.")
+        # Still save if inventory file existed initially, might have been cleared/fixed on load
+        if os.path.exists(args.inventory_file): inventory.save_to_json(args.inventory_file)
         print("\nDiscovery complete. No active devices found.")
 
 

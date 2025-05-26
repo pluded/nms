@@ -15,28 +15,30 @@ from flask import request, redirect, url_for, flash
 try:
     from nms.inventory.device import Inventory
     from nms.discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from nms.monitoring.snmp_collector import fetch_snmp_data
+    # from nms.monitoring.snmp_collector import fetch_snmp_data # Old collector, replaced by discover_snmp for basic info
+    from nms.discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
 except ModuleNotFoundError:
     import sys
     # Add parent of nms.web (which is nms.nms) to path
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from inventory.device import Inventory
     from discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from monitoring.snmp_collector import fetch_snmp_data
+    # from monitoring.snmp_collector import fetch_snmp_data # Old collector
+    from discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
 
-# OIDs for basic device information (consistent with CLI)
-DEFAULT_SNMP_OIDS = [
-    "1.3.6.1.2.1.1.1.0",  # System Description
-    "1.3.6.1.2.1.1.3.0",  # System Uptime
-    "1.3.6.1.2.1.1.5.0",  # System Name
-    "1.3.6.1.2.1.1.6.0",  # System Location
-]
-OID_TO_ATTRIBUTE_MAP = {
-    "1.3.6.1.2.1.1.1.0": "system_description",
-    "1.3.6.1.2.1.1.3.0": "uptime",
-    "1.3.6.1.2.1.1.5.0": "system_name",
-    "1.3.6.1.2.1.1.6.0": "location",
-}
+# OIDs for basic device information (consistent with CLI) - Kept if other parts use it, but discover_snmp has its own.
+# DEFAULT_SNMP_OIDS = [
+#     "1.3.6.1.2.1.1.1.0",  # System Description
+#     "1.3.6.1.2.1.1.3.0",  # System Uptime
+#     "1.3.6.1.2.1.1.5.0",  # System Name
+#     "1.3.6.1.2.1.1.6.0",  # System Location
+# ]
+# OID_TO_ATTRIBUTE_MAP = {
+#     "1.3.6.1.2.1.1.1.0": "system_description",
+#     "1.3.6.1.2.1.1.3.0": "uptime",
+#     "1.3.6.1.2.1.1.5.0": "system_name",
+#     "1.3.6.1.2.1.1.6.0": "location",
+# }
 
 
 # Configure logging for the web app
@@ -97,7 +99,7 @@ def discover_devices():
     """
     if request.method == 'POST':
         network_address = request.form.get('network_address')
-        community_string = request.form.get('community_string', 'public') # Default to 'public'
+        community_string = request.form.get('community_string', 'public') 
         
         discovery_log = [] # To store messages about the process
         error_message = None
@@ -151,45 +153,58 @@ def discover_devices():
             processed_count = 0
             for ip in active_ips:
                 discovery_log.append(f"Processing device: {ip}...")
-                try:
-                    device = inventory.add_device(ip)
-                    if not device:
-                        discovery_log.append(f"  Error: Could not add/get device {ip} in inventory. Skipping.")
-                        logger.warning(f"Failed to add/get device {ip} in web discovery.")
+                device = inventory.get_device(ip)
+                if not device:
+                    try:
+                        device = inventory.add_device(ip_address=ip)
+                        if not device:
+                            discovery_log.append(f"  Error: Could not add device {ip} to inventory. Skipping.")
+                            logger.warning(f"Failed to add device {ip} in web discovery.")
+                            continue
+                    except ValueError as e:
+                        discovery_log.append(f"  Error: Invalid IP address '{ip}': {e}. Skipping.")
+                        logger.warning(f"Invalid IP {ip} encountered in web discovery: {e}")
                         continue
-                except ValueError as e:
-                     discovery_log.append(f"  Error: Invalid IP address '{ip}': {e}. Skipping.")
-                     logger.warning(f"Invalid IP {ip} encountered in web discovery: {e}")
-                     continue
-
-                snmp_raw_data = fetch_snmp_data(ip, community_string, DEFAULT_SNMP_OIDS)
-                attributes_to_update = {}
-                snmp_summary = []
-                if not snmp_raw_data or all(value is None for value in snmp_raw_data.values()):
-                    discovery_log.append(f"  No valid SNMP data received for {ip}.")
-                    logger.warning(f"No SNMP data for {ip} in web discovery.")
-                else:
-                    for oid, value in snmp_raw_data.items():
-                        attr_name = OID_TO_ATTRIBUTE_MAP.get(oid, oid)
-                        snmp_summary.append(f"{attr_name}: {value if value is not None else 'N/A'}")
-                        if value is not None and OID_TO_ATTRIBUTE_MAP.get(oid):
-                            attributes_to_update[OID_TO_ATTRIBUTE_MAP.get(oid)] = value
-                    discovery_log.append(f"  SNMP data for {ip}: {'; '.join(snmp_summary)}")
                 
-                if attributes_to_update:
-                    inventory.update_device_attributes(ip, attributes_to_update)
-                    discovery_log.append(f"  Updated inventory for {ip} with SNMP data.")
-                    logger.info(f"Web discovery updated {ip} with {attributes_to_update}")
-                else:
-                    discovery_log.append(f"  No new attributes to update in inventory for {ip} from SNMP data.")
-                processed_count +=1
-            discovery_log.append(f"Processed {processed_count} active host(s) for SNMP data.")
+                current_protocols = getattr(device, 'discovered_protocols', [])
+                if not isinstance(current_protocols, list): # Ensure it's a list
+                    current_protocols = []
 
+                if "ICMP" not in current_protocols:
+                    current_protocols.append("ICMP")
+
+                attributes_to_update_for_device = {}
+                
+                # SNMP discovery using new discover_snmp function
+                logger.info(f"Web: Attempting SNMP discovery for {ip} with community '{community_string}'")
+                snmp_data = discover_snmp(ip, community_string)
+
+                if snmp_data:
+                    discovery_log.append(f"  SNMP basic info for {ip}: sysDescr='{snmp_data.get('sysDescr', 'N/A')}', sysObjectID='{snmp_data.get('sysObjectID', 'N/A')}'")
+                    logger.info(f"Web SNMP discovery for {ip} successful: {snmp_data}")
+                    attributes_to_update_for_device.update(snmp_data)
+                    if "SNMP" not in current_protocols:
+                        current_protocols.append("SNMP")
+                else:
+                    discovery_log.append(f"  SNMP discovery failed or returned no data for {ip}.")
+                    logger.warning(f"Web SNMP discovery failed for {ip}.")
+
+                attributes_to_update_for_device['discovered_protocols'] = list(set(current_protocols))
+                
+                if attributes_to_update_for_device: # Check if there's anything to update
+                    device.update_attributes(attributes_to_update_for_device)
+                    discovery_log.append(f"  Updated inventory for {ip}.")
+                    logger.info(f"Web discovery updated {ip} with attributes: {attributes_to_update_for_device}")
+                
+                processed_count += 1
+            discovery_log.append(f"Completed processing for {processed_count} active host(s).")
+
+        # Save inventory after processing all active IPs
         try:
             inventory.save_to_json(inventory_file_path)
             discovery_log.append(f"Inventory saved to {os.path.basename(inventory_file_path)}.")
             logger.info(f"Web discovery saved inventory to {inventory_file_path}")
-            flash("Discovery process completed successfully!", "success")
+            flash("Discovery process completed!", "success")
         except Exception as e:
             error_message = f"Error saving inventory: {e}"
             logger.error(f"Web discovery inventory save error: {e}", exc_info=True)
@@ -200,7 +215,7 @@ def discover_devices():
                                network_address=network_address, community_string=community_string)
 
     # For GET request
-    return render_template('discover.html', results=None, network_address="192.168.1.0/24", community_string="public")
+    return render_template('discover.html', results=None, network_address="192.168.1.0/24", community_string=community_string)
 
 
 if __name__ == '__main__':

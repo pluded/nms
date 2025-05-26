@@ -27,9 +27,23 @@ class Device:
         self.location: str | None = kwargs.get("location")
         self.contact: str | None = kwargs.get("contact")
         self.if_number: int | None = kwargs.get("if_number")
+        # New attributes
+        self.vendor: str | None = kwargs.get("vendor")
+        self.model: str | None = kwargs.get("model")
+        self.serial_number: str | None = kwargs.get("serial_number")
+        self.software_version: str | None = kwargs.get("software_version")
+        self.mac_address: str | None = kwargs.get("mac_address")
+        # Initialize discovered_protocols, ensuring it's a list if provided or an empty list
+        self.discovered_protocols: list[str] = kwargs.get("discovered_protocols", []) or []
+
+
         self.other_attributes: dict = {
             k: v for k, v in kwargs.items() 
-            if k not in ["system_description", "uptime", "system_name", "location", "contact", "if_number"]
+            if k not in [
+                "system_description", "uptime", "system_name", "location", 
+                "contact", "if_number", "vendor", "model", "serial_number", 
+                "software_version", "mac_address", "discovered_protocols"
+            ]
         }
         logger.debug(f"Device created: {self.ip_address}")
 
@@ -63,9 +77,37 @@ class Device:
         if self.location: attrs.append(f"Location: {self.location}")
         if self.contact: attrs.append(f"Contact: {self.contact}")
         if self.if_number is not None: attrs.append(f"Number of Interfaces: {self.if_number}")
-        if self.other_attributes:
+        
+        # Existing attributes (like system_description) are already handled if populated
+        # It's assumed sysDescr from SNMP discovery updates self.system_description
+        # via Device.update_attributes if the key 'system_description' or 'sysDescr' is used in the update dict.
+        # For now, let's ensure system_description (potentially from SNMP's sysDescr) is shown if populated.
+        # The original __str__ already includes system_description if it's set.
+
+        if self.vendor: attrs.append(f"Vendor: {self.vendor}")
+        if self.model: attrs.append(f"Model: {self.model}")
+        if self.serial_number: attrs.append(f"Serial Number: {self.serial_number}")
+        if self.software_version: attrs.append(f"Software Version: {self.software_version}")
+        if self.mac_address: attrs.append(f"MAC Address: {self.mac_address}")
+        
+        # Display discovered_protocols
+        if self.discovered_protocols: 
+            attrs.append(f"Discovered Protocols: {', '.join(sorted(list(set(self.discovered_protocols))))}")
+
+        # Display sysObjectID from other_attributes, as it's not a direct attribute
+        sys_object_id = self.other_attributes.get('sysObjectID')
+        if sys_object_id: 
+            attrs.append(f"System Object ID: {sys_object_id}")
+        
+        # Display any remaining other_attributes that aren't sysObjectID
+        # Filter out sysObjectID if it was already displayed
+        other_attrs_to_display = {
+            k: v for k, v in self.other_attributes.items() if k != 'sysObjectID'
+        }
+        if other_attrs_to_display:
             attrs.append("Other Attributes:")
-            for key, value in self.other_attributes.items(): attrs.append(f"  {key}: {value}")
+            for key, value in sorted(other_attrs_to_display.items()): 
+                attrs.append(f"  {key}: {value}")
         return "\n".join(attrs)
 
     def to_dict(self) -> dict:
@@ -77,6 +119,13 @@ class Device:
             "location": self.location,
             "contact": self.contact,
             "if_number": self.if_number,
+            # New attributes
+            "vendor": self.vendor,
+            "model": self.model,
+            "serial_number": self.serial_number,
+            "software_version": self.software_version,
+            "mac_address": self.mac_address,
+            "discovered_protocols": self.discovered_protocols,
             "other_attributes": self.other_attributes,
         }
 
