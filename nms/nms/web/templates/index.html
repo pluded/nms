@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NMS Web Interface</title>
-    <!-- Link to a future CSS file if needed -->
-    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"> -->
+    <title>{{ page_title | default('NMS Dashboard') }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 </head>
 <body>
     <header>
@@ -17,18 +16,57 @@
             <li><a href="{{ url_for('index') }}">Home</a></li>
             <li><a href="{{ url_for('show_inventory') }}">View Inventory</a></li>
             <li><a href="{{ url_for('discover_devices') }}">Discover Devices</a></li>
+            <li><a href="{{ url_for('topology_page') }}">View Topology</a></li>
         </ul>
     </nav>
     
     <main>
-        <h2>{{ message }}</h2>
-        <p>This is the main page of the NMS. More features will be added soon.</p>
+        <h2>{{ page_title | default('NMS Dashboard') }}</h2>
+
+        <section id="dashboard-summary">
+            <h3>Summary</h3>
+            <p>Total Devices Managed: {{ total_devices }}</p>
+            <p>Devices Responded to SNMP: {{ devices_with_snmp_data }}</p>
+            <!-- Future: More detailed stats like device types, common vendors, etc. -->
+        </section>
+
+        <section id="device-overview">
+            <h3>Device Overview (Up to 10 Devices)</h3>
+            {% if all_devices %}
+                <ul>
+                    {% for device in all_devices[:10] %}  {# Display up to 10 devices #}
+                        <li>
+                            <strong>IP:</strong> <a href="{{ url_for('show_inventory') }}#{{ device.ip_address }}">{{ device.ip_address }}</a> - 
+                            <strong>Name:</strong> {{ device.system_name if device.system_name else 'N/A' }}
+                        </li>
+                    {% endfor %}
+                </ul>
+                {% if all_devices|length > 10 %}
+                    <p><a href="{{ url_for('show_inventory') }}">View all {{ all_devices|length }} devices...</a></p>
+                {% endif %}
+            {% else %}
+                <p>No devices found in inventory. Please run discovery from the 'Discover Devices' page.</p>
+            {% endif %}
+        </section>
+
+        <!-- Future: Alerts Section -->
+        <section id="alerts-placeholder" style="display:none;">
+            <h3>Recent Alerts</h3>
+            <p>No active alerts.</p>
+            <!-- Placeholder for alert summaries -->
+        </section>
+
+        <!-- Future: Charts Section -->
+        <section id="charts-placeholder" style="display:none;">
+            <h3>Network Health Charts</h3>
+            <p>Charts will be displayed here.</p>
+            <!-- Placeholder for charts (e.g., device uptime, response times) -->
+        </section>
         
-        <!-- Content will be dynamically inserted here -->
     </main>
     
     <footer>
-        <p>&copy; 2023 NMS Project</p>
+        <p>&copy; {{ "now"|date("Y") }} NMS Project</p> {# Updated year dynamically #}
     </footer>
 </body>
 </html>

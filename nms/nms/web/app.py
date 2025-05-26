@@ -56,9 +56,33 @@ DEFAULT_INVENTORY_FILE = os.path.join(PROJECT_ROOT, "inventory.json")
 @app.route('/')
 def index():
     """
-    Serves the main index page.
+    Serves the main index page with dashboard data.
     """
-    return render_template('index.html', message="Welcome to the NMS Web Interface!")
+    inventory_file_path = DEFAULT_INVENTORY_FILE
+    inventory = Inventory()
+    devices = []
+    total_devices = 0
+    devices_with_snmp_data = 0
+    # error_message = None # Optional: if you want to report errors loading inventory
+
+    if os.path.exists(inventory_file_path):
+        try:
+            inventory.load_from_json(inventory_file_path)
+            devices = inventory.list_all_devices()
+            total_devices = len(devices)
+            # Count devices that have a system_name, implying successful SNMP contact at some point
+            devices_with_snmp_data = sum(1 for dev in devices if getattr(dev, 'system_name', None))
+        except Exception as e:
+            logger.error(f"Error loading inventory for dashboard: {e}", exc_info=True)
+            # error_message = f"Could not load inventory for dashboard: {e}"
+            # devices = [] # ensure devices is empty on error, already initialized
+
+    return render_template('index.html', 
+                           page_title="NMS Dashboard", 
+                           total_devices=total_devices,
+                           devices_with_snmp_data=devices_with_snmp_data,
+                           all_devices=devices # Pass the actual list of device objects
+                          )
 
 
 @app.route('/inventory')
