@@ -35,6 +35,9 @@ class Device:
         self.mac_address: str | None = kwargs.get("mac_address")
         # Initialize discovered_protocols, ensuring it's a list if provided or an empty list
         self.discovered_protocols: list[str] = kwargs.get("discovered_protocols", []) or []
+        # New attribute for L2 links
+        links_arg = kwargs.get("links")
+        self.links: list[dict] = links_arg if links_arg is not None else []
 
 
         self.other_attributes: dict = {
@@ -42,7 +45,7 @@ class Device:
             if k not in [
                 "system_description", "uptime", "system_name", "location", 
                 "contact", "if_number", "vendor", "model", "serial_number", 
-                "software_version", "mac_address", "discovered_protocols"
+                "software_version", "mac_address", "discovered_protocols", "links"
             ]
         }
         logger.debug(f"Device created: {self.ip_address}")
@@ -98,6 +101,16 @@ class Device:
         sys_object_id = self.other_attributes.get('sysObjectID')
         if sys_object_id: 
             attrs.append(f"System Object ID: {sys_object_id}")
+
+        # Display Links
+        if self.links:
+            attrs.append("Links:")
+            for link in self.links:
+                link_summary = f"  - Local: {link.get('local_port_identifier', 'N/A')}, " \
+                               f"Remote Dev: {link.get('remote_device_id', 'N/A')}, " \
+                               f"Remote Port: {link.get('remote_port_id', 'N/A')}, " \
+                               f"Proto: {link.get('protocol', 'N/A')}"
+                attrs.append(link_summary)
         
         # Display any remaining other_attributes that aren't sysObjectID
         # Filter out sysObjectID if it was already displayed
@@ -126,6 +139,7 @@ class Device:
             "software_version": self.software_version,
             "mac_address": self.mac_address,
             "discovered_protocols": self.discovered_protocols,
+            "links": self.links, # Added links attribute
             "other_attributes": self.other_attributes,
         }
 

@@ -281,6 +281,99 @@ class TestInventory(unittest.TestCase):
         self.assertIsNone(loaded_device.software_version)
         self.assertIsNone(loaded_device.mac_address)
         self.assertEqual(loaded_device.discovered_protocols, []) # Default empty list
+        self.assertEqual(loaded_device.links, []) # Default empty list for links
+
+    # --- Tests for Device 'links' attribute ---
+    def test_device_initialization_with_links(self):
+        link1 = {'local_port_identifier': 'Gig0/1', 'remote_device_id': 'SwitchA', 'remote_port_id': 'Eth0/5', 'protocol': 'CDP'}
+        link2 = {'local_port_identifier': 'Gig0/2', 'remote_device_id': 'SwitchB', 'remote_port_id': 'Fa0/10', 'protocol': 'LLDP'}
+        device = Device("192.168.1.1", links=[link1, link2])
+        self.assertEqual(len(device.links), 2)
+        self.assertIn(link1, device.links)
+        self.assertIn(link2, device.links)
+
+    def test_device_to_dict_with_links(self):
+        link1 = {'local_port_identifier': 'Gig0/1', 'remote_device_id': 'SwitchA', 'protocol': 'CDP'}
+        device = Device("192.168.1.1", links=[link1])
+        device_dict = device.to_dict()
+        self.assertIn('links', device_dict)
+        self.assertEqual(len(device_dict['links']), 1)
+        self.assertEqual(device_dict['links'][0], link1)
+
+    def test_device_from_dict_with_links(self):
+        link1 = {'local_port_identifier': 'Eth1', 'remote_device_id': 'RouterX', 'protocol': 'LLDP'}
+        data = {"ip_address": "192.168.1.2", "links": [link1]}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(len(device.links), 1)
+        self.assertEqual(device.links[0], link1)
+
+    def test_device_from_dict_links_is_none(self):
+        data = {"ip_address": "192.168.1.3", "links": None} # Explicitly None
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.links, []) # Should default to empty list
+
+    def test_device_from_dict_links_missing(self):
+        data = {"ip_address": "192.168.1.4"} # links key missing
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.links, []) # Should default to empty list
+
+    def test_device_update_attributes_links(self):
+        device = Device("192.168.1.1")
+        self.assertEqual(device.links, []) # Initial state
+        
+        link1 = {'local_port_identifier': 'Gig0/1', 'remote_device_id': 'SwitchA'}
+        device.update_attributes({'links': [link1]})
+        self.assertEqual(len(device.links), 1)
+        self.assertEqual(device.links[0], link1)
+
+        link2 = {'local_port_identifier': 'Gig0/2', 'remote_device_id': 'SwitchB'}
+        # Test replacing links
+        device.update_attributes({'links': [link2, link1]})
+        self.assertEqual(len(device.links), 2)
+        self.assertIn(link1, device.links)
+        self.assertIn(link2, device.links)
+        
+        # Test setting links to empty list
+        device.update_attributes({'links': []})
+        self.assertEqual(device.links, [])
+
+    def test_device_str_with_links(self):
+        link1 = {'local_port_identifier': 'Gig0/1', 'remote_device_id': 'SwitchA', 'remote_port_id': 'Eth0/5', 'protocol': 'CDP'}
+        link2 = {'local_port_identifier': 'Gig0/2', 'remote_device_id': 'SwitchB', 'remote_port_id': 'Fa0/10', 'protocol': 'LLDP'}
+        device = Device("192.168.1.1", links=[link1, link2])
+        device_str = str(device)
+        self.assertIn("Links:", device_str)
+        self.assertIn("Local: Gig0/1, Remote Dev: SwitchA, Remote Port: Eth0/5, Proto: CDP", device_str)
+        self.assertIn("Local: Gig0/2, Remote Dev: SwitchB, Remote Port: Fa0/10, Proto: LLDP", device_str)
+
+    def test_device_str_without_links(self):
+        device = Device("192.168.1.1")
+        device_str = str(device)
+        self.assertNotIn("Links:", device_str)
+
+    # --- Tests for Inventory with 'links' attribute ---
+    def test_inventory_save_load_with_links(self):
+        link_data = {'local_port_identifier': 'Eth0/0', 'remote_device_id': 'Neighbor1', 'protocol': 'CDP'}
+        self.inventory.add_device("10.0.0.10", links=[link_data])
+        self.inventory.add_device("10.0.0.11") # Device without links
+
+        self.inventory.save_to_json(self.test_json_file)
+        
+        new_inventory = Inventory()
+        new_inventory.load_from_json(self.test_json_file)
+
+        dev1 = new_inventory.get_device("10.0.0.10")
+        self.assertIsNotNone(dev1)
+        self.assertEqual(len(dev1.links), 1)
+        self.assertEqual(dev1.links[0], link_data)
+
+        dev2 = new_inventory.get_device("10.0.0.11")
+        self.assertIsNotNone(dev2)
+        self.assertEqual(dev2.links, []) # Should be empty list by default
+
 
 if __name__ == '__main__':
     unittest.main()
