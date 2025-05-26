@@ -32,7 +32,7 @@ This project is a basic Network Management System (NMS) designed to discover dev
 1.  **Clone the Repository (if applicable):**
     If you have access to the Git repository, clone it:
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/pluded/nms.git
     cd nms-project-root 
     ```
     (For the current context, assume you have the `nms` directory containing the project files.)
