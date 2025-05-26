@@ -6,8 +6,8 @@ import sys
 # Adjust import paths to be robust for different execution contexts
 try:
     from nms.discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from nms.monitoring.snmp_collector import fetch_snmp_data # Original SNMP collector
-    from nms.discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
+    from nms.discovery.snmp_discoverer import discover_snmp 
+    from nms.discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table # L2/L3 Discovery
     from nms.inventory.device import Inventory 
 except ModuleNotFoundError:
     # This block allows running cli.py directly from nms/nms for testing,
@@ -15,8 +15,8 @@ except ModuleNotFoundError:
     # For normal package usage, the top-level nms/ should be in PYTHONPATH.
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from discovery.icmp_sweeper import sweep_network, PingCommandNotFound
-    from monitoring.snmp_collector import fetch_snmp_data # Original SNMP collector
-    from discovery.snmp_discoverer import discover_snmp # New SNMP discoverer
+    from discovery.snmp_discoverer import discover_snmp 
+    from discovery.link_discovery import get_lldp_neighbors, get_cdp_neighbors, get_ip_routing_table # L2/L3 Discovery
     from inventory.device import Inventory
 
 # Get a logger for the CLI module
@@ -123,26 +123,96 @@ def handle_discover(args):
             print(f"  SNMP discovery (new method) failed or returned no data for {ip}.")
 
         # Update discovered_protocols
-        attributes_to_update_for_device['discovered_protocols'] = list(set(current_protocols)) # Ensure uniqueness
+        attributes_to_update_for_device['discovered_protocols'] = sorted(list(set(current_protocols))) # Ensure uniqueness and sort
 
-        # Update device with all collected attributes
-        if attributes_to_update_for_device:
+        # L2 Link Discovery
+        discovered_links = []
+        # LLDP
+        logger.info(f"Attempting LLDP discovery for {ip}...")
+        lldp_links = get_lldp_neighbors(ip, args.community)
+        if lldp_links is not None:
+            if lldp_links: # If list is not empty
+                logger.info(f"Found {len(lldp_links)} LLDP links for {ip}.")
+                print(f"  Found {len(lldp_links)} LLDP links.")
+                if "LLDP" not in attributes_to_update_for_device['discovered_protocols']:
+                    attributes_to_update_for_device['discovered_protocols'].append("LLDP")
+                    attributes_to_update_for_device['discovered_protocols'].sort()
+                for link in lldp_links:
+                    standardized_link = {
+                        'local_port_identifier': str(link.pop('local_port_num', 'N/A')),
+                        'remote_device_id': link.get('remote_system_name') or link.get('remote_chassis_id', 'N/A'),
+                        'remote_port_id': link.get('remote_port_id', 'N/A'),
+                        'remote_port_desc': link.get('remote_port_desc', 'N/A'), # Keep if available
+                        'protocol': link.get('protocol', 'LLDP')
+                    }
+                    discovered_links.append(standardized_link)
+            else:
+                logger.info(f"No LLDP links found for {ip}.")
+                print(f"  No LLDP links found for {ip}.")
+        else:
+            logger.warning(f"LLDP discovery failed for {ip} (returned None).")
+            print(f"  LLDP discovery failed for {ip} (check logs).")
+
+        # CDP
+        logger.info(f"Attempting CDP discovery for {ip}...")
+        cdp_links = get_cdp_neighbors(ip, args.community)
+        if cdp_links is not None:
+            if cdp_links: # If list is not empty
+                logger.info(f"Found {len(cdp_links)} CDP links for {ip}.")
+                print(f"  Found {len(cdp_links)} CDP links.")
+                if "CDP" not in attributes_to_update_for_device['discovered_protocols']:
+                    attributes_to_update_for_device['discovered_protocols'].append("CDP")
+                    attributes_to_update_for_device['discovered_protocols'].sort()
+                for link in cdp_links:
+                    standardized_link = {
+                        'local_port_identifier': str(link.pop('local_ifindex', 'N/A')),
+                        'remote_device_id': link.get('remote_device_id', 'N/A'),
+                        'remote_port_id': link.get('remote_interface', 'N/A'),
+                        'remote_platform': link.get('remote_platform', 'N/A'), # Keep if available
+                        'remote_device_ip': link.get('remote_device_ip', 'N/A'), # Keep if available
+                        'protocol': link.get('protocol', 'CDP')
+                    }
+                    discovered_links.append(standardized_link)
+            else:
+                logger.info(f"No CDP links found for {ip}.")
+                print(f"  No CDP links found for {ip}.")
+        else:
+            logger.warning(f"CDP discovery failed for {ip} (returned None).")
+            print(f"  CDP discovery failed for {ip} (check logs).")
+        
+        if discovered_links:
+            attributes_to_update_for_device['links'] = discovered_links
+            logger.info(f"Adding {len(discovered_links)} L2 links to device {ip}.")
+            print(f"  Adding {len(discovered_links)} L2 links to inventory.")
+        
+        # L3 Routing Table Discovery
+        logger.info(f"Attempting L3 routing table discovery for {ip}...")
+        routing_table_data = get_ip_routing_table(ip, args.community)
+        if routing_table_data is not None: # Will be a list (possibly empty) on success, None on error
+            if routing_table_data: # If list is not empty
+                attributes_to_update_for_device['routing_table'] = routing_table_data
+                logger.info(f"Found {len(routing_table_data)} L3 routes for {ip}.")
+                print(f"  Found {len(routing_table_data)} L3 routes.")
+                if "Routing" not in attributes_to_update_for_device['discovered_protocols']: # Generic protocol name for now
+                    attributes_to_update_for_device['discovered_protocols'].append("Routing")
+                    attributes_to_update_for_device['discovered_protocols'].sort()
+            else: # Empty list, means table is empty or no routes found
+                attributes_to_update_for_device['routing_table'] = [] # Ensure it's set to empty if not already
+                logger.info(f"No L3 routes found in table for {ip}.")
+                print(f"  No L3 routes found for {ip}.")
+        else: # None means SNMP error during fetch
+            logger.warning(f"L3 routing table discovery failed for {ip} (returned None).")
+            print(f"  L3 routing table discovery failed for {ip} (check logs).")
+            # Do not update 'routing_table' if it was None, retain existing or default empty.
+
+        # Update device with all collected attributes (SNMP data, protocols, links, routes)
+        if attributes_to_update_for_device: # Check if there's anything to update
             device.update_attributes(attributes_to_update_for_device)
             logger.info(f"Updated inventory for {ip} with attributes: {attributes_to_update_for_device}")
             print(f"  Updated inventory for {ip}.")
         else:
-            # This case might occur if only ICMP was added and SNMP failed, but we still save protocol
-            logger.info(f"No new attributes (excluding protocols) to update for {ip} from SNMP, but protocol list updated.")
-            print(f"  No new attributes to update from SNMP for {ip}, protocol list updated if changed.")
-            # Still need to save protocol change if it happened
-            if 'discovered_protocols' in attributes_to_update_for_device and device:
-                 device.update_attributes({'discovered_protocols': attributes_to_update_for_device['discovered_protocols']})
-
-
-        # Note: The old fetch_snmp_data and its OID mapping (DEFAULT_SNMP_OIDS, OID_TO_ATTRIBUTE_MAP)
-        # is effectively replaced by the call to discover_snmp for basic info.
-        # If more OIDs were needed, discover_snmp would need to be extended or fetch_snmp_data used in conjunction.
-        # For this task, we are focusing on integrating discover_snmp.
+            logger.info(f"No new attributes, links, or routes to update for {ip}.")
+            print(f"  No new attributes, links, or routes to update for {ip}.")
 
         processed_count += 1
 

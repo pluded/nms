@@ -243,3 +243,133 @@ if __name__ == '__main__':
         logger.error(f"CDP for {non_existent_ip_cdp} unexpectedly returned data or empty list: {cdp_info_timeout}")
 
     logger.info("--- Direct test for CDP link_discovery.py complete ---")
+
+
+# --- IP Routing Table Discovery ---
+
+IP_ROUTE_TYPES = {1: 'other', 2: 'invalid', 3: 'direct', 4: 'indirect'}
+IP_ROUTE_PROTOCOLS = {
+    1: 'other', 2: 'local', 3: 'netmgmt', 4: 'icmp', 5: 'egp',
+    6: 'ggp', 7: 'hello', 8: 'rip', 9: 'is-is', 10: 'es-is',
+    11: 'ciscoIgrp', 12: 'bbnSpfIgp', 13: 'ospf', 14: 'bgp',
+    15: 'idpr', 16: 'ciscoEigrp', 17: 'dvmrp', 18: 'rpl', # Added RPL from a common list
+}
+
+# OIDs for ipCidrRouteTable: 1.3.6.1.2.1.4.24.4
+IP_CIDR_ROUTE_TABLE_OID = '1.3.6.1.2.1.4.24.4'
+IP_CIDR_ROUTE_ENTRY_OID = IP_CIDR_ROUTE_TABLE_OID + '.1' # ipCidrRouteEntry
+
+# Column OIDs within ipCidrRouteEntry
+OID_IP_CIDR_ROUTE_DEST = IP_CIDR_ROUTE_ENTRY_OID + '.1'
+OID_IP_CIDR_ROUTE_MASK = IP_CIDR_ROUTE_ENTRY_OID + '.2'
+OID_IP_CIDR_ROUTE_NEXT_HOP = IP_CIDR_ROUTE_ENTRY_OID + '.4'
+OID_IP_CIDR_ROUTE_IF_INDEX = IP_CIDR_ROUTE_ENTRY_OID + '.5'
+OID_IP_CIDR_ROUTE_TYPE = IP_CIDR_ROUTE_ENTRY_OID + '.6'
+OID_IP_CIDR_ROUTE_PROTO = IP_CIDR_ROUTE_ENTRY_OID + '.7'
+
+
+def get_ip_routing_table(ip_address: str, community_string: str, timeout: int = 2, retries: int = 1) -> list[dict] | None:
+    """
+    Retrieves the IP routing table (ipCidrRouteTable) from a device using SNMP.
+
+    Args:
+        ip_address: The IP address of the target device.
+        community_string: The SNMP community string.
+        timeout: SNMP request timeout in seconds.
+        retries: Number of SNMP request retries.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a route.
+        Returns None if there's a major SNMP error.
+        Returns an empty list if no routes are found or table is empty.
+    """
+    logger.debug(f"Attempting IP routing table discovery for {ip_address} with community '{community_string}'")
+
+    snmp_engine = SnmpEngine()
+    community_data = CommunityData(community_string)
+    transport_target = UdpTransportTarget((ip_address, 161), timeout=timeout, retries=retries)
+    context_data = ContextData()
+
+    var_binds_to_walk = [
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_DEST)),
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_MASK)),
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_NEXT_HOP)),
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_IF_INDEX)),
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_TYPE)),
+        ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_PROTO)),
+    ]
+
+    routes = []
+    current_row_data = {}
+    # The index of ipCidrRouteEntry is (ipCidrRouteDest, ipCidrRouteMask, ipCidrRouteTos, ipCidrRouteNextHop)
+    # We need to track changes in these to know when we are on a new row.
+    last_row_indices = None
+
+    for error_indication, error_status, error_index, var_bind_table_row in nextCmd(
+            snmp_engine, community_data, transport_target, context_data,
+            *var_binds_to_walk, lexicographicMode=False):
+
+        if error_indication:
+            logger.error(f"SNMP error for {ip_address} during IP routing table discovery: {error_indication}")
+            return None
+        elif error_status:
+            logger.error(
+                f"SNMP error for {ip_address} at OID {var_bind_table_row[int(error_index) - 1][0] if error_index else '?'}: {error_status.prettyPrint()}"
+            )
+            break 
+
+        # Check if we are still in the ipCidrRouteTable
+        if not all(str(var_bind[0]).startswith(IP_CIDR_ROUTE_ENTRY_OID) for var_bind in var_bind_table_row):
+            logger.debug(f"Finished IP routing table walk for {ip_address} or OID out of scope.")
+            break
+
+        try:
+            # Extract instance identifiers to determine the row
+            # Index: ipCidrRouteDest, ipCidrRouteMask, ipCidrRouteTos, ipCidrRouteNextHop
+            first_var_bind_oid_str = str(var_bind_table_row[0][0])
+            base_column_oid_str = str(var_binds_to_walk[0][0]) # e.g. OID_IP_CIDR_ROUTE_DEST
+            
+            instance_suffix_str = first_var_bind_oid_str[len(base_column_oid_str):]
+            # Example suffix: .192.168.1.0.255.255.255.0.0.0.0.0.0 (Dest, Mask, TOS, NextHop components)
+            # The actual number of parts can vary depending on how IP addresses are encoded in OID.
+            # For simplicity, we use the full suffix string as the row identifier.
+            current_row_indices_str = instance_suffix_str 
+            
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parsing IP Route table indices for {ip_address}: {e}. OID: {first_var_bind_oid_str}", exc_info=True)
+            continue
+
+        if last_row_indices != current_row_indices_str:
+            if current_row_data: # Save completed previous row
+                routes.append(current_row_data)
+            current_row_data = {} # Start a new route entry
+            last_row_indices = current_row_indices_str
+        
+        # Populate current_row_data
+        for var_bind in var_bind_table_row:
+            oid_str = str(var_bind[0])
+            val = var_bind[1]
+
+            if oid_str.startswith(OID_IP_CIDR_ROUTE_DEST):
+                current_row_data['destination'] = str(val.prettyPrint())
+            elif oid_str.startswith(OID_IP_CIDR_ROUTE_MASK):
+                current_row_data['mask'] = str(val.prettyPrint())
+            elif oid_str.startswith(OID_IP_CIDR_ROUTE_NEXT_HOP):
+                current_row_data['next_hop'] = str(val.prettyPrint())
+            elif oid_str.startswith(OID_IP_CIDR_ROUTE_IF_INDEX):
+                current_row_data['if_index'] = int(val)
+            elif oid_str.startswith(OID_IP_CIDR_ROUTE_TYPE):
+                route_type_val = int(val)
+                current_row_data['type'] = IP_ROUTE_TYPES.get(route_type_val, route_type_val)
+            elif oid_str.startswith(OID_IP_CIDR_ROUTE_PROTO):
+                route_proto_val = int(val)
+                current_row_data['protocol'] = IP_ROUTE_PROTOCOLS.get(route_proto_val, route_proto_val)
+
+    if current_row_data and 'destination' in current_row_data: # Ensure some data was collected
+        routes.append(current_row_data)
+
+    logger.info(f"Found {len(routes)} IP routes for {ip_address}.")
+    return routes
+
+
+if __name__ == '__main__':

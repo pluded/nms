@@ -373,6 +373,106 @@ class TestInventory(unittest.TestCase):
         dev2 = new_inventory.get_device("10.0.0.11")
         self.assertIsNotNone(dev2)
         self.assertEqual(dev2.links, []) # Should be empty list by default
+        self.assertEqual(dev2.routing_table, []) # Should be empty list by default for routing_table
+
+    # --- Tests for Device 'routing_table' attribute ---
+    def test_device_initialization_with_routing_table(self):
+        route1 = {'destination': '0.0.0.0', 'mask': '0.0.0.0', 'next_hop': '192.168.1.1', 'protocol': 'local'}
+        route2 = {'destination': '10.0.0.0', 'mask': '255.0.0.0', 'next_hop': '10.1.1.1', 'protocol': 'ospf'}
+        device = Device("172.16.0.1", routing_table=[route1, route2])
+        self.assertEqual(len(device.routing_table), 2)
+        self.assertIn(route1, device.routing_table)
+        self.assertIn(route2, device.routing_table)
+
+    def test_device_to_dict_with_routing_table(self):
+        route1 = {'destination': '192.168.2.0', 'mask': '255.255.255.0', 'next_hop': '10.0.0.1'}
+        device = Device("172.16.0.2", routing_table=[route1])
+        device_dict = device.to_dict()
+        self.assertIn('routing_table', device_dict)
+        self.assertEqual(len(device_dict['routing_table']), 1)
+        self.assertEqual(device_dict['routing_table'][0], route1)
+
+    def test_device_from_dict_with_routing_table(self):
+        route1 = {'destination': '172.17.0.0', 'mask': '255.255.0.0', 'if_index': 3}
+        data = {"ip_address": "172.16.0.3", "routing_table": [route1]}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(len(device.routing_table), 1)
+        self.assertEqual(device.routing_table[0], route1)
+
+    def test_device_from_dict_routing_table_is_none(self):
+        data = {"ip_address": "172.16.0.4", "routing_table": None}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.routing_table, [])
+
+    def test_device_from_dict_routing_table_missing(self):
+        data = {"ip_address": "172.16.0.5"}
+        device = Device.from_dict(data)
+        self.assertIsNotNone(device)
+        self.assertEqual(device.routing_table, [])
+
+    def test_device_update_attributes_routing_table(self):
+        device = Device("172.16.0.1")
+        self.assertEqual(device.routing_table, [])
+        
+        route1 = {'destination': '0.0.0.0', 'mask': '0.0.0.0'}
+        device.update_attributes({'routing_table': [route1]})
+        self.assertEqual(len(device.routing_table), 1)
+        self.assertEqual(device.routing_table[0], route1)
+
+        route2 = {'destination': '10.0.0.0', 'mask': '255.0.0.0'}
+        device.update_attributes({'routing_table': [route2, route1]})
+        self.assertEqual(len(device.routing_table), 2)
+        self.assertIn(route1, device.routing_table)
+        self.assertIn(route2, device.routing_table)
+        
+        device.update_attributes({'routing_table': []}) # Clear routing table
+        self.assertEqual(device.routing_table, [])
+
+    def test_device_str_with_routing_table(self):
+        route1 = {'destination': '0.0.0.0', 'mask': '0.0.0.0', 'next_hop': '192.168.1.1', 'protocol': 'local'}
+        route2 = {'destination': '10.0.0.0', 'mask': '255.0.0.0', 'next_hop': '10.1.1.1', 'protocol': 'ospf'}
+        route3 = {'destination': '172.16.0.0', 'mask': '255.240.0.0', 'next_hop': '172.16.0.254', 'protocol': 'bgp'}
+        device = Device("172.16.0.1", routing_table=[route1, route2, route3])
+        device_str = str(device)
+        self.assertIn("Routing Table Entries: 3", device_str)
+        self.assertIn("Dest: 0.0.0.0/0.0.0.0, NextHop: 192.168.1.1, Proto: local", device_str)
+        self.assertIn("Dest: 10.0.0.0/255.0.0.0, NextHop: 10.1.1.1, Proto: ospf", device_str)
+        self.assertIn("... and more.", device_str) # Since we display first 2 and there are 3
+
+    def test_device_str_with_one_route_in_routing_table(self):
+        route1 = {'destination': '0.0.0.0', 'mask': '0.0.0.0', 'next_hop': '192.168.1.1', 'protocol': 'local'}
+        device = Device("172.16.0.1", routing_table=[route1])
+        device_str = str(device)
+        self.assertIn("Routing Table Entries: 1", device_str)
+        self.assertIn("Dest: 0.0.0.0/0.0.0.0, NextHop: 192.168.1.1, Proto: local", device_str)
+        self.assertNotIn("... and more.", device_str)
+
+    def test_device_str_without_routing_table(self):
+        device = Device("172.16.0.1")
+        device_str = str(device)
+        self.assertNotIn("Routing Table Entries:", device_str)
+
+    # --- Tests for Inventory with 'routing_table' attribute ---
+    def test_inventory_save_load_with_routing_table(self):
+        route_data = {'destination': '192.168.5.0', 'mask': '255.255.255.0', 'protocol': 'static'}
+        self.inventory.add_device("10.0.1.10", routing_table=[route_data])
+        self.inventory.add_device("10.0.1.11") # Device without routing table
+
+        self.inventory.save_to_json(self.test_json_file)
+        
+        new_inventory = Inventory()
+        new_inventory.load_from_json(self.test_json_file)
+
+        dev1 = new_inventory.get_device("10.0.1.10")
+        self.assertIsNotNone(dev1)
+        self.assertEqual(len(dev1.routing_table), 1)
+        self.assertEqual(dev1.routing_table[0], route_data)
+
+        dev2 = new_inventory.get_device("10.0.1.11")
+        self.assertIsNotNone(dev2)
+        self.assertEqual(dev2.routing_table, [])
 
 
 if __name__ == '__main__':

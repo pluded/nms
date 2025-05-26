@@ -38,6 +38,9 @@ class Device:
         # New attribute for L2 links
         links_arg = kwargs.get("links")
         self.links: list[dict] = links_arg if links_arg is not None else []
+        # New attribute for L3 routing table
+        routing_table_arg = kwargs.get("routing_table")
+        self.routing_table: list[dict] = routing_table_arg if routing_table_arg is not None else []
 
 
         self.other_attributes: dict = {
@@ -45,7 +48,8 @@ class Device:
             if k not in [
                 "system_description", "uptime", "system_name", "location", 
                 "contact", "if_number", "vendor", "model", "serial_number", 
-                "software_version", "mac_address", "discovered_protocols", "links"
+                "software_version", "mac_address", "discovered_protocols", "links",
+                "routing_table" # Added routing_table
             ]
         }
         logger.debug(f"Device created: {self.ip_address}")
@@ -111,6 +115,16 @@ class Device:
                                f"Remote Port: {link.get('remote_port_id', 'N/A')}, " \
                                f"Proto: {link.get('protocol', 'N/A')}"
                 attrs.append(link_summary)
+
+        # Display Routing Table
+        if self.routing_table:
+            attrs.append(f"Routing Table Entries: {len(self.routing_table)}")
+            for i, route in enumerate(self.routing_table[:2]): # Display first 2 routes
+                route_summary = f"  - Dest: {route.get('destination', 'N/A')}/{route.get('mask', 'N/A')}, " \
+                                f"NextHop: {route.get('next_hop', 'N/A')}, Proto: {route.get('protocol', 'N/A')}"
+                attrs.append(route_summary)
+            if len(self.routing_table) > 2:
+                attrs.append("    ... and more.")
         
         # Display any remaining other_attributes that aren't sysObjectID
         # Filter out sysObjectID if it was already displayed
@@ -139,7 +153,8 @@ class Device:
             "software_version": self.software_version,
             "mac_address": self.mac_address,
             "discovered_protocols": self.discovered_protocols,
-            "links": self.links, # Added links attribute
+            "links": self.links, 
+            "routing_table": self.routing_table, # Added routing_table attribute
             "other_attributes": self.other_attributes,
         }
 

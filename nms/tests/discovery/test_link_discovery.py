@@ -279,6 +279,114 @@ class TestCdpLinkDiscovery(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['remote_device_ip'], '192.168.10.20')
 
+# --- Tests for IP Routing Table ---
+class TestIpRoutingTableDiscovery(unittest.TestCase):
+    @patch('nms.nms.discovery.link_discovery.nextCmd')
+    def test_get_ip_routing_table_success(self, mock_next_cmd):
+        # Simulate two route entries
+        # Route 1: 0.0.0.0/0 via 192.168.1.1, ifIndex 2, type indirect(4), proto local(2)
+        # OID Index for ipCidrRouteEntry is: dest, mask, tos, next_hop
+        # Example: .0.0.0.0 .0.0.0.0 .0 .192.168.1.1
+        idx1 = ".0.0.0.0.0.0.0.0.0.192.168.1.1" # Simplified for test; actual encoding is more complex
+        
+        # Route 2: 10.10.0.0/16 via 10.0.0.2, ifIndex 5, type direct(3), proto ospf(13)
+        # Example: .10.10.0.0 .255.255.0.0 .0 .10.0.0.2
+        idx2 = ".10.10.0.0.255.255.0.0.0.10.0.0.2"
+
+        mock_response_route1 = [
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_DEST + idx1), rfc1902.IpAddress('0.0.0.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_MASK + idx1), rfc1902.IpAddress('0.0.0.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_NEXT_HOP + idx1), rfc1902.IpAddress('192.168.1.1'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_IF_INDEX + idx1), Integer32(2))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_TYPE + idx1), Integer32(4))), # indirect
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_PROTO + idx1), Integer32(2))),  # local
+        ]
+        mock_response_route2 = [
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_DEST + idx2), rfc1902.IpAddress('10.10.0.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_MASK + idx2), rfc1902.IpAddress('255.255.0.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_NEXT_HOP + idx2), rfc1902.IpAddress('10.0.0.2'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_IF_INDEX + idx2), Integer32(5))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_TYPE + idx2), Integer32(3))), # direct
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_PROTO + idx2), Integer32(13))), # ospf
+        ]
+        mock_end_of_table_response = [
+            (ObjectType(ObjectIdentity('1.3.6.1.2.1.5.0'), Integer32(0))), # Some OID outside ipCidrRouteTable
+        ] * 6
+
+        mock_next_cmd.return_value = iter([
+            (None, 0, 0, mock_response_route1),
+            (None, 0, 0, mock_response_route2),
+            (None, 0, 0, mock_end_of_table_response),
+        ])
+
+        result = get_ip_routing_table('192.0.2.200', 'routetest')
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)
+
+        route1 = result[0]
+        self.assertEqual(route1['destination'], '0.0.0.0')
+        self.assertEqual(route1['mask'], '0.0.0.0')
+        self.assertEqual(route1['next_hop'], '192.168.1.1')
+        self.assertEqual(route1['if_index'], 2)
+        self.assertEqual(route1['type'], 'indirect') # Mapped from 4
+        self.assertEqual(route1['protocol'], 'local')  # Mapped from 2
+
+        route2 = result[1]
+        self.assertEqual(route2['destination'], '10.10.0.0')
+        self.assertEqual(route2['mask'], '255.255.0.0')
+        self.assertEqual(route2['next_hop'], '10.0.0.2')
+        self.assertEqual(route2['if_index'], 5)
+        self.assertEqual(route2['type'], 'direct')   # Mapped from 3
+        self.assertEqual(route2['protocol'], 'ospf') # Mapped from 13
+
+    @patch('nms.nms.discovery.link_discovery.nextCmd')
+    def test_get_ip_routing_table_snmp_error(self, mock_next_cmd):
+        mock_error_indication = MagicMock()
+        mock_error_indication.prettyPrint.return_value = "SNMP request timed out (Routing Table)"
+        mock_next_cmd.return_value = iter([
+            (mock_error_indication, 0, 0, [])
+        ])
+        result = get_ip_routing_table('192.0.2.201', 'routetest')
+        self.assertIsNone(result)
+
+    @patch('nms.nms.discovery.link_discovery.nextCmd')
+    def test_get_ip_routing_table_no_routes(self, mock_next_cmd):
+        mock_end_of_table_response = [
+            (ObjectType(ObjectIdentity('1.3.6.1.2.1.5.0'), Integer32(0))),
+        ] * 6
+        mock_next_cmd.return_value = iter([
+            (None, 0, 0, mock_end_of_table_response)
+        ])
+        result = get_ip_routing_table('192.0.2.202', 'routetest')
+        self.assertEqual(result, [])
+
+    @patch('nms.nms.discovery.link_discovery.nextCmd')
+    def test_get_ip_routing_table_unknown_type_protocol(self, mock_next_cmd):
+        # Test with type/protocol values not in our mapping dictionaries
+        idx1 = ".172.16.0.0.255.255.255.0.0.172.16.0.1"
+        mock_response = [
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_DEST + idx1), rfc1902.IpAddress('172.16.0.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_MASK + idx1), rfc1902.IpAddress('255.255.255.0'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_NEXT_HOP + idx1), rfc1902.IpAddress('172.16.0.1'))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_IF_INDEX + idx1), Integer32(3))),
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_TYPE + idx1), Integer32(99))), # Unknown type
+            (ObjectType(ObjectIdentity(OID_IP_CIDR_ROUTE_PROTO + idx1), Integer32(88))),  # Unknown proto
+        ]
+        mock_end_of_table_response = [(ObjectType(ObjectIdentity('1.3.6.1.2.1.5.0')))] * 6
+        mock_next_cmd.return_value = iter([
+            (None, 0, 0, mock_response),
+            (None, 0, 0, mock_end_of_table_response)
+        ])
+        result = get_ip_routing_table('192.0.2.203', 'routetest')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['type'], 99) # Should return the integer value
+        self.assertEqual(result[0]['protocol'], 88) # Should return the integer value
+
 
 if __name__ == '__main__':
+    # Need to import OIDs for routing table tests if run directly
+    from nms.nms.discovery.link_discovery import OID_IP_CIDR_ROUTE_DEST, OID_IP_CIDR_ROUTE_MASK, \
+                                                 OID_IP_CIDR_ROUTE_NEXT_HOP, OID_IP_CIDR_ROUTE_IF_INDEX, \
+                                                 OID_IP_CIDR_ROUTE_TYPE, OID_IP_CIDR_ROUTE_PROTO, \
+                                                 get_ip_routing_table # Import the function too
     unittest.main()

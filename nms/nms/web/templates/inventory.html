@@ -57,6 +57,8 @@
                         <th>Location</th>
                         <th>Contact</th>
                         <th>Interfaces</th>
+                        <th>L2 Links</th>
+                        <th>Routing Info</th>
                         <th>Other Attributes</th> 
                     </tr>
                 </thead>
@@ -85,6 +87,34 @@
                             <td>{{ device.location if device.location is not none else 'N/A' }}</td>
                             <td>{{ device.contact if device.contact is not none else 'N/A' }}</td>
                             <td>{{ device.if_number if device.if_number is not none else 'N/A' }}</td>
+                            <td>
+                                {% if device.links %}
+                                    {{ device.links | length }} link(s) discovered.
+                                    <ul>
+                                    {% for link in device.links[:3] %} {# Display up to 3 links #}
+                                        <li>
+                                            {{ link.protocol }}: Local Port {{ link.local_port_identifier }} -> 
+                                            {{ link.remote_device_id }} 
+                                            ({{ link.remote_port_id if link.remote_port_id is not none else 'N/A' }})
+                                            {% if link.remote_platform %} (Platform: {{link.remote_platform }}) {% endif %}
+                                            {% if link.remote_device_ip %} (IP: {{link.remote_device_ip }}) {% endif %}
+                                        </li>
+                                    {% endfor %}
+                                    {% if device.links | length > 3 %}
+                                        <li>... and {{ (device.links | length) - 3 }} more.</li>
+                                    {% endif %}
+                                    </ul>
+                                {% else %}
+                                    0
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if device.routing_table is defined and device.routing_table is not none %}
+                                    {{ device.routing_table | length }} route(s)
+                                {% else %}
+                                    0 route(s)
+                                {% endif %}
+                            </td>
                             <td>
                                 {# Filter out sysObjectID and sysDescr if already handled or to avoid duplication #}
                                 {% set displayed_keys = ['sysObjectID', 'sysDescr'] %}

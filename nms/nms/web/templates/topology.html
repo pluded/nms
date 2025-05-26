@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - NMS</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.css" type="text/css" />
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333; }
+        header { background-color: #333; color: #fff; padding: 1em 0; text-align: center; }
+        nav { background-color: #444; padding: 0.5em; text-align: center; }
+        nav ul { list-style-type: none; padding: 0; margin: 0; }
+        nav ul li { display: inline; margin-right: 20px; }
+        nav ul li a { color: #fff; text-decoration: none; }
+        main { padding: 20px; text-align: center; /* Center the graph container */ }
+        #network_topology_graph {
+            width: 95%; /* Use percentage for responsiveness */
+            max-width: 1200px; /* Optional: max width for very large screens */
+            height: 75vh; /* Use viewport height for responsiveness */
+            min-height: 500px; /* Minimum height */
+            border: 1px solid lightgray;
+            margin: 0 auto; /* Center the div itself */
+            background-color: #fff; /* White background for the graph area */
+        }
+        footer { text-align: center; padding: 1em 0; background-color: #333; color: #fff; margin-top: 20px; /* Add margin if footer is not fixed */ }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Network Management System</h1>
+    </header>
+    
+    <nav>
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('show_inventory') }}">View Inventory</a></li>
+            <li><a href="{{ url_for('discover_devices') }}">Discover Devices</a></li>
+            <li><a href="{{ url_for('topology_page') }}">View Topology</a></li>
+        </ul>
+    </nav>
+    
+    <main>
+        <h2>{{ title }}</h2>
+        <div id="network_topology_graph"></div>
+        <div id="loading_message" style="text-align:center; padding:20px;">Loading topology data...</div>
+    </main>
+    
+    <footer>
+        <p>&copy; 2023 NMS Project</p>
+    </footer>
+
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+    <script type="text/javascript">
+        document.addEventListener('DOMContentLoaded', function () {
+            const container = document.getElementById('network_topology_graph');
+            const loadingMessage = document.getElementById('loading_message');
+            
+            // Vis.js options
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 16,
+                    font: {
+                        size: 12,
+                        color: '#333'
+                    },
+                    borderWidth: 2
+                },
+                edges: {
+                    width: 2,
+                    smooth: {
+                        type: 'continuous', // continuous, dynamic, discrete, straightCross, etc.
+                        roundness: 0.5
+                    },
+                    arrows: {
+                        to: { enabled: true, scaleFactor: 0.5 } // Smaller arrows
+                    }
+                },
+                physics: {
+                    enabled: true,
+                    barnesHut: {
+                        gravitationalConstant: -2500, // Adjusted
+                        centralGravity: 0.15,         // Adjusted
+                        springLength: 100,            // Adjusted
+                        springConstant: 0.05,        // Adjusted
+                        damping: 0.09,
+                        avoidOverlap: 0.15           // Adjusted
+                    },
+                    solver: 'barnesHut', // barnesHut is good for larger networks
+                    stabilization: { // Optional: improve initial layout stability
+                        iterations: 1000, // Default is 1000
+                        fit: true
+                    }
+                },
+                layout: {
+                    // randomSeed: undefined, 
+                    // improvedLayout: true, // default
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    dragNodes: true,
+                    dragView: true,
+                    zoomView: true,
+                    navigationButtons: true, // Adds zoom and fit buttons
+                    keyboard: true // Allows keyboard navigation
+                },
+                groups: {
+                    'Cisco': { color: { background: '#007bff', border: '#0056b3' }, font: { color: 'white' } },
+                    'Juniper': { color: { background: '#28a745', border: '#1e7e34' }, font: { color: 'white' } },
+                    'HPE': { color: { background: '#5bc0de', border: '#46b8da' }, font: { color: 'white' } }, // Example for HPE
+                    'Microsoft': { color: { background: '#ffc107', border: '#dba600' }, font: { color: 'black' } },
+                    'NetSNMP': { color: { background: '#fd7e14', border: '#d8680c' }, font: { color: 'white' } },
+                    'Linux': { color: { background: '#dc3545', border: '#bd2c3a' }, font: { color: 'white' } },
+                    'Unmanaged': { color: { background: '#6c757d', border: '#545b62' }, shape: 'box', font: { color: 'white' } },
+                    'Managed Device': { color: { background: '#17a2b8', border: '#117a8b' }, font: { color: 'white' } }, // Fallback for managed
+                    // Add more vendor groups as needed based on data from API
+                }
+            };
+
+            // Fetch data and create the network
+            fetch('/api/topology_data')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    loadingMessage.style.display = 'none'; // Hide loading message
+                    if (data.error) {
+                        console.error("Error fetching topology data:", data.error);
+                        container.innerHTML = `<p style="color:red; text-align:center;">Error loading topology: ${data.error}</p>`;
+                        return;
+                    }
+
+                    const nodes = new vis.DataSet(data.nodes);
+                    const edges = new vis.DataSet(data.edges);
+                    
+                    const networkData = {
+                        nodes: nodes,
+                        edges: edges
+                    };
+                    
+                    const network = new vis.Network(container, networkData, options);
+
+                    // Optional: Event listener for stabilization
+                    network.on("stabilizationIterationsDone", function () {
+                        console.log("Network layout stabilized.");
+                        // You can stop physics now if you want a static graph after initial layout
+                        // network.setOptions( {physics:false} ); 
+                    });
+
+                })
+                .catch(error => {
+                    loadingMessage.style.display = 'none'; // Hide loading message
+                    console.error('Error fetching or parsing topology data:', error);
+                    container.innerHTML = `<p style="color:red; text-align:center;">Could not load topology data: ${error.message}. Please ensure the inventory is populated and the API is working.</p>`;
+                });
+        });
+    </script>
+</body>
+</html>
