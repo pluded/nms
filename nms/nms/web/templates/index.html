@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NMS Web Interface</title>
+    <!-- Link to a future CSS file if needed -->
+    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"> -->
+</head>
+<body>
+    <header>
+        <h1>Network Management System</h1>
+    </header>
+    
+    <nav>
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('show_inventory') }}">View Inventory</a></li>
+            <li><a href="{{ url_for('discover_devices') }}">Discover Devices</a></li>
+        </ul>
+    </nav>
+    
+    <main>
+        <h2>{{ message }}</h2>
+        <p>This is the main page of the NMS. More features will be added soon.</p>
+        
+        <!-- Content will be dynamically inserted here -->
+    </main>
+    
+    <footer>
+        <p>&copy; 2023 NMS Project</p>
+    </footer>
+</body>
+</html>

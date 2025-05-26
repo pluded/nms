@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Inventory - NMS</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333; }
+        header { background-color: #333; color: #fff; padding: 1em 0; text-align: center; }
+        nav { background-color: #444; padding: 0.5em; text-align: center; }
+        nav ul { list-style-type: none; padding: 0; margin: 0; }
+        nav ul li { display: inline; margin-right: 20px; }
+        nav ul li a { color: #fff; text-decoration: none; }
+        main { padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #555; color: #fff; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .error { color: red; font-weight: bold; }
+        footer { text-align: center; padding: 1em 0; background-color: #333; color: #fff; position: fixed; bottom: 0; width: 100%;}
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Network Management System</h1>
+    </header>
+    
+    <nav>
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('show_inventory') }}">View Inventory</a></li>
+        </ul>
+    </nav>
+    
+    <main>
+        <h2>Device Inventory</h2>
+        
+        {% if error_message %}
+            <p class="error">{{ error_message }}</p>
+        {% endif %}
+        
+        {% if devices %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>IP Address</th>
+                        <th>System Name</th>
+                        <th>System Description</th>
+                        <th>Uptime</th>
+                        <th>Location</th>
+                        <th>Contact</th>
+                        <th>Interfaces</th>
+                        <th>Other Attributes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for device in devices %}
+                        <tr>
+                            <td>{{ device.ip_address }}</td>
+                            <td>{{ device.system_name if device.system_name is not none else 'N/A' }}</td>
+                            <td>{{ device.system_description if device.system_description is not none else 'N/A' }}</td>
+                            <td>{{ device.uptime if device.uptime is not none else 'N/A' }}</td>
+                            <td>{{ device.location if device.location is not none else 'N/A' }}</td>
+                            <td>{{ device.contact if device.contact is not none else 'N/A' }}</td>
+                            <td>{{ device.if_number if device.if_number is not none else 'N/A' }}</td>
+                            <td>
+                                {% if device.other_attributes %}
+                                    <ul>
+                                    {% for key, value in device.other_attributes.items() %}
+                                        <li><strong>{{ key }}:</strong> {{ value }}</li>
+                                    {% endfor %}
+                                    </ul>
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% elif not error_message %} 
+            <p>No devices found in inventory.</p>
+        {% endif %}
+    </main>
+    
+    <footer>
+        <p>&copy; 2023 NMS Project</p>
+    </footer>
+</body>
+</html>
